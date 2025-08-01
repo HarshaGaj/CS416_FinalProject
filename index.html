@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Fast Food Nation</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 1rem;
+    }
+    #annotations {
+      margin-top: 0.5rem;
+      font-size: 1rem;
+      font-style: italic;
+      color: #333;
+    }
+    svg {
+      width: 100%;
+      height: 80vh;
+      margin-top: 2rem;
+      opacity: 0;
+      transition: opacity 0.8s ease-in-out;
+    }
+    .dot {
+      fill: red;
+      opacity: 0.6;
+      stroke: black;
+      stroke-width: 0.2;
+    }
+    .bar {
+      fill: steelblue;
+    }
+    button, select {
+      margin-right: 10px;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+    }
+    .tooltip {
+      position: absolute;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 4px 8px;
+      font-size: 0.9rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+  </style>
+</head>
+<body>
+  <h2>Fast Food Nation</h2>
+  <div id="controls">
+    <button onclick="renderScene1()">Scene 1: Map</button>
+    <button onclick="renderScene2()">Scene 2: Brand Count</button>
+    <button onclick="enableScene3Dropdown()">Scene 3: Explore by Brand</button>
+    <select id="brandSelect" onchange="renderScene3()" style="display: none;"></select>
+  </div>
+  <div id="annotations"></div>
+  <svg id="vis"></svg>
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    const width = 960;
+    const height = 600;
+    const svg = d3.select("#vis");
+    const tooltip = d3.select("#tooltip");
+
+    let dataCache;
+    let brandList;
+
+    d3.json("top10_fastfood_cleaned.json").then(data => {
+      dataCache = data;
+      brandList = [...new Set(data.map(d => d.name))].sort();
+
+      const select = d3.select("#brandSelect");
+      brandList.forEach(brand => {
+        select.append("option")
+          .attr("value", brand)
+          .text(brand);
+      });
+
+      renderScene1();
+    });
+
+    function fadeIn() {
+      svg.style("opacity", 0);
+      setTimeout(() => svg.style("opacity", 1), 10);
+    }
+
+    function setAnnotation(text) {
+      d3.select("#annotations").text(text);
+    }
+
+    function renderScene1() {
+      svg.selectAll("*").remove();
+      d3.select("#brandSelect").style("display", "none");
+      setAnnotation("Scene 1: A nationwide view – Fast food locations are spread across every region, forming dense clusters in urban areas.");
+
+      const projection = d3.geoAlbersUsa()
+        .scale(1300)
+        .translate([width / 2, height / 2]);
+      const path = d3.geoPath().projection(projection);
+
+      d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(us => {
+        svg.append("g")
+          .selectAll("path")
+          .data(topojson.feature(us, us.objects.states).features)
+          .join("path")
+          .attr("fill", "#f0f0f0")
+          .attr("stroke", "#999")
+          .attr("d", path);
+
+        svg.append("g")
+          .selectAll("circle")
+          .data(dataCache)
+          .join("circle")
+          .attr("class", "dot")
+          .attr("r", 2)
+          .attr("cx", d => projection([d.longitude, d.latitude])?.[0])
+          .attr("cy", d => projection([d.longitude, d.latitude])?.[1])
+          .on("mouseover", (event, d) => {
+            tooltip.style("opacity", 1)
+              .html(`<strong>${d.name}</strong><br/>${d.city || ''}, ${d.state || ''}`)
+              .style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 20) + "px");
+          })
+          .on("mousemove", (event) => {
+            tooltip.style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 20) + "px");
+          })
+          .on("mouseout", () => {
+            tooltip.style("opacity", 0);
+          });
+        fadeIn();
+      });
+    }
+
+    function renderScene2() {
+      svg.selectAll("*").remove();
+      d3.select("#brandSelect").style("display", "none");
+      setAnnotation("Scene 2: Brand dominance – McDonald's leads with the highest number of locations, followed by Burger King and Taco Bell.");
+
+      const counts = d3.rollups(dataCache, v => v.length, d => d.name)
+        .sort((a, b) => d3.descending(a[1], b[1]));
+
+      const margin = { top: 60, right: 20, bottom: 60, left: 60 };
+      const innerWidth = width - margin.left - margin.right;
+      const innerHeight = height - margin.top - margin.bottom;
+
+      const x = d3.scaleBand()
+        .domain(counts.map(d => d[0]))
+        .range([0, innerWidth])
+        .padding(0.1);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(counts, d => d[1])])
+        .nice()
+        .range([innerHeight, 0]);
+
+      const g = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      g.append("g").call(d3.axisLeft(y));
+
+      g.append("g")
+        .attr("transform", `translate(0,${innerHeight})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .attr("transform", "rotate(-40)")
+        .style("text-anchor", "end");
+
+      g.selectAll("rect")
+        .data(counts)
+        .join("rect")
+        .attr("class", "bar")
+        .attr("x", d => x(d[0]))
+        .attr("width", x.bandwidth())
+        .attr("y", innerHeight)
+        .attr("height", 0)
+        .on("mouseover", (event, d) => {
+          tooltip.style("opacity", 1)
+            .html(`<strong>${d[0]}</strong>: ${d[1]} locations`)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mousemove", (event) => {
+          tooltip.style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", () => {
+          tooltip.style("opacity", 0);
+        })
+        .transition()
+        .duration(1000)
+        .delay((d, i) => i * 100)
+        .attr("y", d => y(d[1]))
+        .attr("height", d => innerHeight - y(d[1]));
+
+      g.append("text")
+        .attr("x", innerWidth / 2)
+        .attr("y", -20)
+        .attr("text-anchor", "middle")
+        .style("font-size", "16px")
+        .text("Number of Locations by Chain");
+      fadeIn();
+    }
+
+    function renderScene3() {
+      const selected = d3.select("#brandSelect").property("value");
+      svg.selectAll("*").remove();
+      setAnnotation(`Scene 3: Exploring ${selected} – View all locations of the selected chain across the country.`);
+
+      const projection = d3.geoAlbersUsa()
+        .scale(1300)
+        .translate([width / 2, height / 2]);
+      const path = d3.geoPath().projection(projection);
+
+      d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(us => {
+        svg.append("g")
+          .selectAll("path")
+          .data(topojson.feature(us, us.objects.states).features)
+          .join("path")
+          .attr("fill", "#f0f0f0")
+          .attr("stroke", "#999")
+          .attr("d", path);
+
+        const filtered = dataCache.filter(d => d.name === selected);
+        svg.append("g")
+          .selectAll("circle")
+          .data(filtered)
+          .join("circle")
+          .attr("class", "dot")
+          .attr("r", 2)
+          .attr("cx", d => projection([d.longitude, d.latitude])?.[0])
+          .attr("cy", d => projection([d.longitude, d.latitude])?.[1])
+          .on("mouseover", (event, d) => {
+            tooltip.style("opacity", 1)
+              .html(`<strong>${d.name}</strong><br/>${d.city || ''}, ${d.state || ''}`)
+              .style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 20) + "px");
+          })
+          .on("mousemove", (event) => {
+            tooltip.style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 20) + "px");
+          })
+          .on("mouseout", () => {
+            tooltip.style("opacity", 0);
+          });
+        fadeIn();
+      });
+    }
+
+    function enableScene3Dropdown() {
+      d3.select("#brandSelect").style("display", "inline-block");
+      renderScene3();
+    }
+  </script>
+</body>
+</html>
